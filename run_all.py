@@ -127,6 +127,15 @@ def _get_shared_components(api_key: str):
     encoder          = SentenceTransformer("all-MiniLM-L6-v2")
     qb_retriever     = QuestionBankRetriever(QUESTION_BANK_PATH, encoder)
 
+    # If textbooks were not available, import question-bank items into
+    # the KG so retrievers can still find useful context.
+    if not os.path.exists(TEXTBOOK_DIR):
+        if os.path.exists(QUESTION_BANK_PATH):
+            try:
+                kg.load_question_bank(QUESTION_BANK_PATH)
+            except Exception as e:
+                print(f"  [!] Failed to import question bank into KG: {e}")
+
     llm_client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
     _shared_components = dict(

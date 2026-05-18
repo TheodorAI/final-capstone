@@ -13,7 +13,7 @@ class Logger:
             f.write(f"Experiment Started at {time.ctime()}\n{'='*50}\n")
 
     def log(self, message: str):
-        print(message)
+        # Write all logs to the experiment log file only (no stdout).
         with open(self.log_file, 'a', encoding='utf-8') as f:
             f.write(message + "\n")
 

@@ -98,6 +98,26 @@ class AdvancedKnowledgeGraph:
             triplets = data.get('triplets', [])
         self.logger.log(f"   >>> Loading {len(triplets)} logic edges...")
 
+        # If textbooks weren't loaded, there may be no node content for
+        # the source_node ids referenced by triplets. Collect head/tail
+        # strings per source_node and create lightweight node content so
+        # graph expansion and retrieval still work.
+        node_texts = {}
+        for t in triplets:
+            src = t.get('source_node')
+            if not src:
+                continue
+            head = t.get('head', '')
+            tail = t.get('tail', '')
+            # accumulate short representative text
+            node_texts.setdefault(src, []).append(f"{head}. {tail}.")
+
+        # Add node placeholders for any referenced source_node missing
+        for nid, snippets in node_texts.items():
+            if nid not in self.nodes:
+                content = " ".join(snippets)[:1000]
+                self.add_node(nid, content, metadata={"inferred_from_triplets": True})
+
         valid_triplets = []
         for t in triplets:
             if not all(k in t for k in ('head', 'tail', 'relation', 'source_node')):
@@ -118,7 +138,7 @@ class AdvancedKnowledgeGraph:
             src  = t['source_node']
             related = self.entity_to_nodes[h] | self.entity_to_nodes[tail]
             for target in related:
-                if target != src:
+                if target != src and target in self.nodes:
                     # ← FIX: pass the original entity strings as labels
                     self.add_edge(
                         src, target,
@@ -131,3 +151,37 @@ class AdvancedKnowledgeGraph:
                 break
 
         self.logger.log(f"   >>> Built {edge_count} logic association paths.")
+
+    def load_question_bank(self, question_bank_path: str):
+        """
+        Load question bank and add each question as a lightweight KG node.
+        This lets retrievers fall back to QBank contents when textbooks
+        are unavailable.
+        """
+        if not os.path.exists(question_bank_path):
+            self.logger.log(f"   [!] Question bank not found at {question_bank_path} — skipping KG import.")
+            return
+
+        try:
+            with open(question_bank_path, 'r', encoding='utf-8') as fh:
+                questions = json.load(fh)
+        except Exception:
+            self.logger.log(f"   [!] Failed to parse question bank: {question_bank_path}")
+            return
+
+        added = 0
+        for q in questions:
+            qid = q.get('id') or q.get('qid') or q.get('unique_id')
+            if not qid:
+                continue
+            nid = f"qbank_{qid}"
+            if nid in self.nodes:
+                continue
+            # Use question text + rationale as node content
+            text = q.get('question') or q.get('statement') or q.get('sentence') or ''
+            rationale = q.get('rationale') or q.get('explanation') or ''
+            content = (text + ' ' + rationale).strip()[:1000]
+            self.add_node(nid, content, metadata={"source": "question_bank"})
+            added += 1
+
+        self.logger.log(f"   >>> Imported {added} question-bank items into KG as nodes.")
