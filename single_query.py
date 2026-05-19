@@ -107,13 +107,9 @@ def generate_single(api_key: str, topic: str, generator: str = "graph_rag",
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate a single question for a single topic.")
-    parser.add_argument("--topic", required=True, help="Topic or query string")
-    parser.add_argument("--generator", default="graph_rag", choices=["no_retrieval","vector_rag","graph_rag"], help="Which generation strategy to use")
-    parser.add_argument("--format", default="mcq_single", choices=["mcq_single","mcq_multi","true_false","fill_blank","open_answer"], help="Question format")
-    parser.add_argument("--top_k", type=int, default=5, help="Top-k for vector retrieval")
-    parser.add_argument("--hops", type=int, default=2, help="Graph hops for graph retriever")
-    parser.add_argument("--output", help="Optional path to save JSON output")
+    parser = argparse.ArgumentParser(description="Generate a single question from JSON input and output minimal JSON result.")
+    parser.add_argument("--input", help="Path to input JSON file (use '-' or omit to read from stdin).")
+    parser.add_argument("--output", help="Optional path to save FULL JSON output (silent).")
     args = parser.parse_args()
 
     api_key = os.getenv("DEEPSEEK_API_KEY")
@@ -121,19 +117,90 @@ def main():
         print("[ERROR] DEEPSEEK_API_KEY not set in environment.")
         sys.exit(1)
 
-    res = generate_single(api_key, args.topic, generator=args.generator, question_format=args.format, top_k=args.top_k, hops=args.hops)
+    # Read input JSON from file or stdin
+    input_json = None
+    if args.input and args.input != '-':
+        try:
+            with open(args.input, 'r', encoding='utf-8') as f:
+                input_json = json.load(f)
+        except Exception as e:
+            print(f"[ERROR] Failed to read input JSON: {e}")
+            sys.exit(1)
+    else:
+        try:
+            raw = sys.stdin.read()
+            input_json = json.loads(raw) if raw and raw.strip() else {}
+        except Exception as e:
+            print(f"[ERROR] Failed to parse JSON from stdin: {e}")
+            sys.exit(1)
 
-    out_str = json.dumps(res, ensure_ascii=False, indent=2)
-    # Always print the final generated question JSON to stdout (single line of output)
-    print(out_str)
-    # Also save to file if requested, but do not print extra messages to stdout
+    topic = input_json.get('topic')
+    if not topic:
+        print('[ERROR] input JSON must contain "topic" field')
+        sys.exit(1)
+
+    generator = input_json.get('generator', 'graph_rag')
+    question_format = input_json.get('question_format') or input_json.get('format') or 'mcq_single'
+    top_k = int(input_json.get('top_k', 5))
+    hops = int(input_json.get('hops', 2))
+
+    # Initialise shared components and generate
+    comps = _init_shared(api_key)
+    res = generate_single(api_key, topic, generator=generator, question_format=question_format, top_k=top_k, hops=hops, comps=comps)
+
+    def _extract_minimal(qjson: dict) -> dict:
+        # Validate: warn if actual format differs from requested
+        actual_fmt = qjson.get('question_format')
+        if actual_fmt and actual_fmt != question_format:
+            try:
+                comps['logger'].log(f"[WARN] Format mismatch: requested='{question_format}' but got='{actual_fmt}' for topic='{topic}'")
+            except Exception:
+                pass
+        
+        # Force requested format for extraction (ignore what question claims)
+        qfmt = question_format
+        out_q = None
+        out_a = None
+
+        if qfmt == 'mcq_single':
+            out_q = qjson.get('question')
+            out_a = qjson.get('correct_answer') or (qjson.get('correct_answers') and qjson.get('correct_answers')[0])
+        elif qfmt == 'mcq_multi':
+            out_q = qjson.get('question')
+            ca = qjson.get('correct_answers') or qjson.get('correct_answer')
+            out_a = ','.join(ca) if isinstance(ca, list) else str(ca)
+        elif qfmt == 'true_false':
+            out_q = qjson.get('statement')
+            out_a = str(qjson.get('tf_answer'))
+        elif qfmt == 'fill_blank':
+            out_q = qjson.get('sentence')
+            ans = qjson.get('answers') or []
+            out_a = ' | '.join(ans) if isinstance(ans, list) else str(ans)
+        elif qfmt == 'open_answer':
+            out_q = qjson.get('question')
+            out_a = qjson.get('model_answer') or qjson.get('answer')
+        else:
+            out_q = qjson.get('question') or qjson.get('sentence') or qjson.get('statement')
+            out_a = qjson.get('answer') or qjson.get('model_answer') or qjson.get('correct_answer')
+
+        if not out_q and isinstance(qjson.get('question'), dict):
+            nested = qjson.get('question')
+            out_q = nested.get('question') or nested.get('statement') or nested.get('sentence')
+            out_a = nested.get('answer') or nested.get('correct_answer') or nested.get('model_answer')
+
+        return {"question": out_q or "", "answer": out_a or ""}
+
+    minimal = _extract_minimal(res)
+
+    # Output minimal JSON (only question and answer)
+    print(json.dumps(minimal, ensure_ascii=False))
+
+    # Optionally save full JSON silently and log
     if args.output:
         try:
             with open(args.output, 'w', encoding='utf-8') as f:
-                f.write(out_str)
-            # Log the save action to the experiment log
+                json.dump(res, f, ensure_ascii=False, indent=2)
             try:
-                comps = _init_shared(api_key)
                 comps['logger'].log(f"Saved single_query result to {args.output}")
             except Exception:
                 pass

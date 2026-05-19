@@ -1230,14 +1230,8 @@ class SmartGenerator:
                 progress_callback=progress_callback
             )
 
-        question_type  = _choose_question_type(topic, qb_retriever)
-        vary_threshold = (
-            self.VARY_THRESHOLD_COMP if question_type == "computational"
-            else self.VARY_THRESHOLD_CONC
-        )
-
         if qb_retriever is not None and qb_retriever.available:
-            best_q, best_sim = self._find_best_question(topic, question_type, qb_retriever)
+            best_q, best_sim = self._find_best_question(topic, question_type, qb_retriever, question_format=question_format)
             print(f"[DEBUG] topic='{topic}' | type='{question_type}'")
             print(f"[DEBUG] best_sim={best_sim:.4f} (REUSE>{self.REUSE_THRESHOLD}, VARY>{vary_threshold})")
             if best_q:
@@ -1441,12 +1435,14 @@ class SmartGenerator:
         return max(0.0, min(1.0, float(ip_score)))
 
     def _find_best_question(
-        self, topic: str, question_type: str, qb_retriever
+        self, topic: str, question_type: str, qb_retriever, question_format: str = None
     ) -> Tuple[Optional[Dict], float]:
         """
         FIX-C + FIX-J: search for question_type-appropriate questions.
         Handles both legacy 'type' field and new 'question_type' field.
         Falls back to any type if none of the right type are found.
+        
+        If question_format is specified, also filter by format (e.g. 'mcq_single').
         """
         query     = self._build_query(topic, question_type)
         query_vec = qb_retriever.encoder.encode([query], convert_to_numpy=True)
@@ -1463,6 +1459,11 @@ class SmartGenerator:
             # FIX-J: handle both old 'type' and new 'question_type' fields
             q_type = q.get("question_type") or q.get("type", "")
             if q_type == question_type:
+                # Format check: if format specified, also match on format
+                if question_format is not None:
+                    q_fmt = q.get("question_format")
+                    if q_fmt and q_fmt != question_format:
+                        continue  # Skip if format doesn't match
                 sim = self._cosine_from_ip(score)
                 if sim > best_sim:
                     best_sim = sim
