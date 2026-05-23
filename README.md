@@ -48,29 +48,13 @@ echo "DEEPSEEK_API_KEY=your_key_here" > .env
 
 ## 📖 使用流程
 
-### 第一步：构建知识图谱与题库
-
-`build_kg.py` 支持 5 种构建模式，通过 `--mode` 参数控制：
-
-| mode | 功能 | 产物 |
-|---|---|---|
-| `extract_only` | 从教材中抽取知识图谱三元组 | `global_knowledge_graph.json` |
-| `qb_only` | 分类已有题目 + 基于 KG 生成计算题 + 多题型生成 | `question_bank.json`（增量更新） |
-| `kg_only` | 仅基于已有 KG 生成计算型单选题 | `question_bank.json`（增量更新） |
-| `multi_type` | 仅基于已有 KG 生成 5 种多题型 | `question_bank.json`（增量更新） |
-| `all`（默认）| 运行全部阶段 | `global_knowledge_graph.json` + `question_bank.json` |
+### 第一步：构建知识图谱
 
 ```bash
-# 仅抽取知识图谱
 python build_kg.py --mode extract_only
-
-# 全流程：抽取 KG → 分类题库 → 生成题目
-python build_kg.py --mode all
 ```
 
-**产物说明：**
-- `global_knowledge_graph.json` — 知识图谱三元组，供检索器使用
-- `question_bank.json` — 汇总题库（含分类后的原始题 + KG 生成题 + 多题型题），作为 few-shot 示例供生成器参考
+从教材中抽取三元组，生成 `global_knowledge_graph.json`。
 
 ### 第二步：启动守护进程
 
